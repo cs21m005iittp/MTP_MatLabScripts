@@ -1,77 +1,104 @@
-% %%
-% % network defination and options
-% layers = [
-%     convolution2dLayer([3 3],20,"Name","conv","Padding","same")
-%     convolution2dLayer([3 3],32,"Name","conv_1","Padding","same")
-%     fullyConnectedLayer(24,"Name","fc")
-%     softmaxLayer("Name","softmax")];
-% options = trainingOptions("adam", ...
-%     LearnRateSchedule="piecewise", ...
-%     LearnRateDropFactor=0.2, ...
-%     LearnRateDropPeriod=5, ...
-%     MaxEpochs=5, ...
-%     MiniBatchSize=32, ...
-%     Plots="training-progress");
-% % trainedNet = trainNetwork(data,layers,options);
-% %%
+tic
+data = [];
+% x = [];
+% data = gpuArray(x); while running onto GPU use this
 
-data = {};
-cfgHE = wlanHESUConfig;
-cfgHE.ChannelBandwidth = 'CBW20';  % Channel bandwidth
-cfgHE.NumSpaceTimeStreams = 2;     % Number of space-time streams
-cfgHE.NumTransmitAntennas = 2;     % Number of transmit antennas
-cfgHE.APEPLength = 1e3;            % Payload length in bytes
-cfgHE.ExtendedRange = false;       % Do not use extended range format
-cfgHE.Upper106ToneRU = false;      % Do not use upper 106 tone RU
-cfgHE.PreHESpatialMapping = false; % Spatial mapping of pre-HE fields
-cfgHE.GuardInterval = 0.8;         % Guard interval duration
-cfgHE.HELTFType = 4;               % HE-LTF compression mode
-cfgHE.ChannelCoding = 'LDPC';      % Channel coding
-cfgHE.MCS = 3;                     % Modulation and coding scheme
+channels=600;
+x=randi([0 200],1,channels);
+y=randi([0 200],1,channels);
 
-fs = wlanSampleRate(cfgHE);
-chanBW = cfgHE.ChannelBandwidth;
 
-channels=1;
-x=randi([1 200],1,channels);
-y=randi([1 200],1,channels);
-TimeSamples = 1600;
-scenario = 4;
+anntenas=2;
 
-cfgModel = winner2.wimparset;
-cfgModel.NumTimeSamples = TimeSamples;     % Frame length
-cfgModel.IntraClusterDsUsed = "no";   % No cluster splitting
-cfgModel.SampleDensity = 2e5;         % For lower sample rate
-cfgModel.PathLossModelUsed = "yes";   % Turn on path loss
-cfgModel.ShadowingModelUsed = "yes";  % Turn on shadowing
-cfgModel.SampleRate=fs;
-for i = 1:channels
-    cfgLayout = createUsersLayout(x(i),y(i),scenario);
-    winChannel = comm.WINNER2Channel(cfgModel,cfgLayout);
-    chanInfo = info(winChannel);
+
+iterations = 3;
+isFirstIteration=true;
+parfor i = 1:channels
+    csi_val=[];
+    disp(" started simulaton for channel : %s",num2str(i));
+    cfgHE = wlanHESUConfig;
+    cfgHE.ChannelBandwidth = 'CBW20';  % Channel bandwidth
+    cfgHE.NumSpaceTimeStreams = anntenas;     % Number of space-time streams
+    cfgHE.NumTransmitAntennas = anntenas;     % Number of transmit antennas
+    cfgHE.APEPLength = 1e3;            % Payload length in bytes
+    cfgHE.ExtendedRange = false;       % Do not use extended range format
+    cfgHE.Upper106ToneRU = false;      % Do not use upper 106 tone RU
+    cfgHE.PreHESpatialMapping = false; % Spatial mapping of pre-HE fields
+%     cfgHE.GuardInterval = 0.8;         % Guard interval duration
+    cfgHE.HELTFType = 4;               % HE-LTF compression mode
+    cfgHE.ChannelCoding = 'LDPC';      % Channel coding
+%     cfgHE.MCS = 3;                     % Modulation and coding scheme
     
-    CSI = winner2.wim(cfgModel,cfgLayout);
+    fs = wlanSampleRate(cfgHE);
+    chanBW = cfgHE.ChannelBandwidth;
+    TimeSamples=50;
+    cfgModel = winner2.wimparset;
+    cfgModel.NumTimeSamples = TimeSamples;     % Time samples for CSI collection
+    cfgModel.IntraClusterDsUsed = "no";   % No cluster splitting
+%     cfgModel.SampleDensity = 200000;         % For lower sample rate
+    cfgModel.PathLossModelUsed = "no";   % Turn off path loss
+    cfgModel.ShadowingModelUsed = "no";  % Turn off shadowing
+    cfgModel.SampleRate=fs;
+%       cfgModel.SampleDensity = 20;
+   % cfgModel.RandomSeed = 10; % For repeatability
+    % {3=B1-Urban micro-cell , 4=B2-Bad Urban micro-cell,10=C1-Suburban, 11=C2 - urban macro cell,14=D1-Rural macro-cell, 15=D2a}.
+    scenario = 4;
+    % finding distance between user and base station < 20 then skip that channel%
+    distance = sqrt((x(i)-100)^2+(y(i)-100)^2);
+    
+    fprintf(' distance between AP and user is = %d',distance);
+    %if distance < 20
+    %    continue;
+
+    %end
+    
+    cfgLayout = createUsersLayout(x(i),y(i),scenario,anntenas);
+    
+    winChannel = comm.WINNER2Channel(cfgModel,cfgLayout);
+%     chanInfo = info(winChannel);
+    
+        [CSI1,pathDelays,finalCond] = winner2.wim(winChannel.ModelConfig,winChannel.LayoutConfig);
+    
+    [CSI2,~,finalCond] = winner2.wim(winChannel.ModelConfig,winChannel.LayoutConfig,finalCond);
+    
+    CSI = cellfun(@(x,y) cat(4,x,y),CSI1,CSI2,'UniformOutput',false);
+%     [H2,~,finalCond] = winner2.wim(cfgModel,cfgLayout,finalCond);
+    
     %
     CSI_Conv = cell2mat(CSI);
+    CSI_Conv = abs(CSI_Conv);
     
+%     %below code snppet gives PDP
+%     a=size(CSI_Conv);
+%     delaysPower=zeros(1,a(3));
+%     for k = 1:a(3)
+%         delaysPower(i)=mean(CSI_Conv(1,1,k,:),'all');
+%         
+%     end
+%     hold on
+%     impz(delaysPower');
+%     hold on
+%     % end PDP
     
     Y=zeros(1,24);
-    maxNumErrors = 5;   % The maximum number of packet errors at an SNR point
-    maxNumPackets = 50; % The maximum number of packets at an SNR point
+    maxNumErrors = 1;   % The maximum number of packet errors at an SNR point
+    maxNumPackets = 100; % The maximum number of packets at an SNR point
     
-    packetErrorRate = zeros(1,3);
+    packetErrorRate = zeros(1,iterations);
+
     
     count =1;
      
     results = [];
     % snr = mcs_scemes';
-     iter = [1;2;3];
+     iter = linspace(1,iterations,iterations);
+     iter=iter';
     tbl = table(iter);
-    counter=1;
-    startMcs =0;
-    endMcs = 2;
+    counter = 1;
+    startMcs = 0;
+    endMcs = 11;
     once = true;
-     for mcs_ = startMcs:endMcs
+    for mcs_ = startMcs:endMcs
         
          %changing MCS
         cfgHE.MCS=mcs_;
@@ -80,7 +107,7 @@ for i = 1:channels
         
     
          
-        for isnr = 1:1 % iterations
+        for isnr = 1:iterations % iterations
         % Set random substream index per iteration to ensure that each
         % iteration uses a repeatable set of random numbers
         stream = RandStream('combRecursive','Seed',99);
@@ -117,32 +144,7 @@ for i = 1:channels
     %         reset(winChannel);
             [rx,pathgains] = winChannel(txPad);
     
-    %         % processing impulse response of link:
-    %         scrsz = get(groot,"ScreenSize");
-    %         figSize = min(scrsz([3,4]))/2.3;
-    %         if once == true
-    %         figure(Position= ...
-    %             [scrsz(3)*.3-figSize/2,scrsz(4)*.25-figSize/2,figSize,figSize]);
-    %         hold on;
-    %         for linkIdx = 1:1
-    %             delay = chanInfo.ChannelFilterDelay(linkIdx);
-    %             stem(((0:(frameLen-1))-delay)/chanInfo.SampleRate(linkIdx), ...
-    %                 abs(rx{linkIdx}(1:frameLen,1)));
-    %         end
-    %         maxX = max((cell2mat(cellfun(@(x) find(abs(x) < 1e-8,1,"first"), ...
-    %             rx.',UniformOutput=false)) - chanInfo.ChannelFilterDelay)./ ...
-    %             chanInfo.SampleRate);
-    %         minX = -max(chanInfo.ChannelFilterDelay./chanInfo.SampleRate);
-    %         xlim([minX, maxX]);
-    %         
-    %         xlabel("Time (s)"); 
-    %         ylabel("Magnitude");
-    %         legend("Link 1");
-    %         title("Impulse Response at First Receive Antenna");
-    %         end
-    %         once = false;
-    %         %end visualization processing impulse response of link:
-            
+             
             rx_converted = cell2mat(rx);
             rx=rx_converted;%important line
     
@@ -220,7 +222,7 @@ for i = 1:channels
               ' Iterarions ' num2str(isnr) ...
               ' completed after ' num2str(numPkt-1) ' packets,'...
               ' PER:' num2str(packetErrorRate(isnr))]);
-        release(winChannel);
+        
         end
         %% Plot Packet Error Rate vs SNR
     %     tbl = table(snr,Output1,Output2);
@@ -229,43 +231,52 @@ for i = 1:channels
         % calculate average packet error rate above all snr
         % compare with threshold 10%
         %
-        if mean(MCS,'all') < 0.1
+        if mean(MCS,'all') < 0.01
     
             Y(counter)=1;
         %
         else 
             Y(counter)=0;
         end
-    
+        if counter==1
+            
+            csi_val=abs(chanEst);
+        end
         counter=counter+1;
+        release(winChannel);
+       
         end
          
         
      end   
-     arr=[];
-     for i=0:(endMcs-startMcs)*2
-        if i == 0
-            arr=[arr "MCS"];
-        
-        else
-            arr=[arr "MCS_"+i];
-        end
-        
-    end
-    figure;
-    head(tbl,3)
-    %semilogy(tbl,"snr_",arr);
-    plot(tbl,"iter",arr);
-    grid on
-    legend
-    xlabel('Iterations');
-    ylabel('PER');
-    title(sprintf('PER for HE Channel %s, scenario:Bad urban macro-cell',cfgHE.ChannelBandwidth));
+%      arr=[]; % used for plotting data purpose
+%      for i=0:(endMcs-startMcs)*2
+%         if i == 0
+%             arr=[arr "MCS"];
+%         
+%         else
+%             arr=[arr "MCS_"+i];
+%         end
+%         
+%     end
+%     figure;
+     head(tbl,3)
+%     %semilogy(tbl,"snr_",arr);
+%     plot(tbl,"iter",arr);
+%     grid on
+%     legend
+%     xlabel('Iterations');
+%     ylabel('PER');
+%     title(sprintf('PER for HE Channel %s, scenario:Bad urban macro-cell',cfgHE.ChannelBandwidth));
       
     disp(Y);
-    CSI_Conv = abs(CSI_Conv);
-    data=[data;{CSI_Conv,Y}];
+
+    data=[data;{csi_val,Y,finalCond}];
+    
 end
+
+save('Dataset_50K_B2.mat','data')
+toc
 % % passing scenarios for sample datapoint
 % sampleTestData = getSampleTest(4);
 % trainedNet = trainNetwork(data,layers,options);
